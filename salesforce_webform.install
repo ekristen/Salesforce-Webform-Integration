@@ -1,0 +1,81 @@
+<?php
+
+/**
+ * Implementation of hook_install
+ * 
+ * Actions to perform when installing the module
+ */
+function salesforce_webform_install()
+{
+	db_update('system')
+	  ->condition('name', 'salesforce_webform')
+	  ->condition('type', 'module')
+	  ->fields(array('weight' => -1))
+	  ->execute();
+
+	variable_set('salesforce_webform_active_webforms', serialize(array()));
+	variable_set('salesforce_webform_webform_objects', serialize(array()));
+} // end function salesforce_webform_install
+
+
+/**
+ * Implementation of hook_uninstall
+ * 
+ * Actions to perform when uninstalling the module
+ */
+function salesforce_webform_uninstall()
+{
+	db_delete('variable')
+	  ->condition('name', 'salesforce_webform%', 'LIKE')
+	  ->execute();
+} // end function salesforce_webform_uninstall
+
+
+/**
+ * Implementation of hook_schema
+ * 
+ * Define tables schemas for the module
+ */
+function salesforce_webform_schema()
+{
+	$schema = array();
+	
+	$schema['salesforce_webform_fieldmaps'] = array(
+		'description' => 'A table for mapping webform components to salesforce objects',
+		'fields' => array(
+			'id' => array(
+				'description' => 'Unique ID of the entry',
+				'type' => 'serial',
+			),
+			'nid' => array(
+				'description' => 'Corresponding Webform Node ID',
+		        'type' => 'int',
+		        'unsigned' => TRUE,
+		        'not null' => TRUE,
+		        'default' => 0,
+			),
+			'cid' => array(
+				'description' => 'Corresponding Webform Component ID',
+		        'type' => 'int',
+		        'unsigned' => TRUE,
+		        'not null' => TRUE,
+		        'default' => 0,
+			),
+			'sffname' => array(
+				'description' => 'Corresponding Salesforce Field Name',
+		        'type' => 'varchar',
+				'length' => '255',
+		        'default' => '',
+			)
+		),
+		'indexes' => array(
+			'id' => array('id'),
+			'nid' => array('nid'),
+			'cid' => array('cid')
+	    ),
+		'primary key' => array('id'),
+	);
+	
+	return $schema;
+} // end function salesforce_webform_schema
+

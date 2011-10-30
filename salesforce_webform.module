@@ -1,0 +1,312 @@
+<?php
+
+/**
+ * Implementation of hook_node_load
+ * 
+ * This function is called every time a node is loaded from the database.
+ * 
+ * Essentially looking to ensure we are looking at a specific node, if true
+ * then checking to see if the node is of type webform or not. If true, then
+ * check to see if license key generation is suppose to occur, if true, then
+ * set generate_license on $node object to true.
+ */
+function salesforce_webform_node_load($nodes, $types)
+{
+	// We only care if we are laoding a single node.
+	if (count($nodes) > 1)
+	{
+		return;
+	}
+
+	$node = $nodes[key($nodes)];
+
+	// We only care if we are dealing with a webform node
+	if ($node->type == 'webform')
+	{
+		$active = variable_get('salesforce_webform_active_webforms', serialize(array()));
+		$object = variable_get('salesforce_webform_webform_objects', serialize(array()));
+		$active_webforms = unserialize($active);
+		$webform_objects = unserialize($object);
+
+		if (in_array($node->nid, $active_webforms))
+		{
+			$node->use_salesforce    = 1;
+			$node->salesforce_object = $webform_objects[$node->nid];
+		}
+		else
+		{
+			$node->use_salesforce = 0;
+		}		
+	}
+} // end function salesforce_webform_node_load
+
+
+/**
+ * Implementation of hook_licensing_node_insert
+ * 
+ * When a node is updated this gets called and in turn calls the private
+ * function _salesforce_webform_node_insert_update for action.
+ */
+function salesforce_webform_node_insert($node)
+{
+	_salesforce_webform_node_insert_update($node);
+} // end function salesforce_webform_node_insert
+
+
+/**
+ * Implementation of hook_licensing_node_update
+ * 
+ * When a node is updated this gets called and in turn calls the private
+ * function _salesforce_webform_node_insert_update for action.
+ */
+function salesforce_webform_node_update($node)
+{
+	_salesforce_webform_node_insert_update($node);
+} // end function salesforce_webform_node_update
+
+
+/**
+ * Private Function (only to be used from within this module)
+ * 
+ * This function is called by either the hook_node_update or hook_node_insert callbacks,
+ * its purpose is to validate if license key generation is suppose to happen and if so then
+ * set the generate_license value on the $node object true.
+ */
+function _salesforce_webform_node_insert_update($node)
+{
+	$active = variable_get('salesforce_webform_active_webforms', serialize(array()));
+	$object = variable_get('salesforce_webform_webform_objects', serialize(array()));
+	$active_webforms = unserialize($active);
+	$webform_objects = unserialize($object);
+
+	if ( isset($node->use_salesforce) && $node->use_salesforce == 1)
+	{
+		if (!in_array($node->nid, $active_webforms))
+		{
+			$active_webforms[] = $node->nid;
+			variable_set('salesforce_webform_active_webforms', serialize($active_webforms));
+		}
+
+		$webform_objects[$node->nid] = $node->salesforce_object;
+		variable_set('salesforce_webform_webform_objects', serialize($webform_objects));
+	}
+	else
+	{
+		if (in_array($node->nid, $active_webforms))
+		{
+			$key = array_search($node->nid, $active_webforms);
+			unset($active_webforms[$key]);
+
+			variable_set('salesforce_webform_active_webforms', serialize($active_webforms));
+		}
+	}
+} // end function _salesforce_webform_node_insert_update
+
+
+/**
+ * Implementation of hook_form_alter
+ * 
+ * Alter the webform_node_form with Salesforce settings in the additional
+ * settings section. Allows the ability to send to Salesforce and to define
+ * which Salesforce object the webform submissions will be mapped to.
+ */
+function salesforce_webform_form_alter(&$form, &$form_state, $form_id)
+{
+	if ( $form_id == 'webform_node_form' )
+	{		
+		$types = array();
+		foreach (salesforce_api_describeGlobal()->types as $type)
+		{
+			$types[$type->name] = $type->label;
+		}
+
+		/* Start SalesForce Settings Form */
+		$form['salesforce_webform_settings'] = array(
+			'#type' => 'fieldset',
+			'#title' => t('SalesForce Settings'),
+			'#collapsible' => TRUE,
+			'#collapsed' => FALSE,
+			'#group' => 'additional_settings',
+			'#attributes' => array(
+		      'class' => array('salesforce-webform-settings-form'),
+		    ),
+		    '#attached' => array(
+		      'js' => array(drupal_get_path('module', 'salesforce_webform') . '/salesforce_webform.js'),
+		    ),
+			'#weight' => 10
+		);
+		$form['salesforce_webform_settings']['use_salesforce'] = array (
+			'#type' => 'radios',
+			'#title' => t('Submit to SalesForce'),
+			'#options' => array(
+				1=>t('Yes'), 0=>t('No')
+			),
+			'#description' => t('If yes, the form will be sent via SOAP to SalesForce.  Make sure you have specified the username & password in Administer->Site Configuration->SalesForce Webform first.'),
+			'#default_value' => (isset($form['#node']->use_salesforce)) ? $form['#node']->use_salesforce : 0,
+		);
+		$form['salesforce_webform_settings']['salesforce_object'] = array(
+			'#type' => 'select',
+			'#title' => t('Object Type'),
+			'#options' => $types,
+			'#description' => t('Select which object type to submit to.'),
+			'#default_value' => (isset($form['#node']->salesforce_object)) ? $form['#node']->salesforce_object : ''
+		);
+	}
+} // end function salesforce_webform_form_alter
+
+
+/**
+ * Implementation of MODULE_form_FORM_ID_alter
+ * 
+ * If Salesforce was enabled for the module, then add the Saleforces form elements
+ * to the component edit form so that mapping to the salesforce object field can be done.
+ */
+function salesforce_webform_form_webform_component_edit_form_alter(&$form, &$form_state)
+{
+	$node = node_load($form['nid']['#value']);
+
+	if ($node->use_salesforce == 1)
+	{
+		$form['salesforce_webform'] = array(
+			'#type' => 'fieldset',
+			'#title' => 'Salesforce',
+			'#collapsible' => true,
+			'#collapsed' => false
+		);
+
+		$options = array();
+		$options['none'] = '--None--';
+		foreach (salesforce_api_describeSObject('Lead')->fields as $field)
+		{
+			$options[$field->name] = $field->label;
+		}
+
+		$result = db_select('salesforce_webform_fieldmaps', 'swf')
+					->fields('swf', array('sffname'))
+					->condition('nid', $form['nid']['#value'])
+					->condition('cid', $form['cid']['#value'])
+					->execute()
+					->fetchObject();
+
+		$form['salesforce_webform']['object'] = array(
+			'#type' => 'select',
+			'#title' => 'Salesforce Object Field',
+			'#options' => $options,
+			'#default_value' => isset($result->sffname) ? $result->sffname : ''
+		);
+	}
+} // end function salesforce_webform_form_webform_component_edit_form_alter
+
+
+/**
+ * Implementation of hook_webform_component_insert
+ * 
+ * Upon component insert (save) for the webform create the necessary field
+ * mapping entry for webform component to Salesforce object field
+ */
+function salesforce_webform_webform_component_insert($component)
+{
+	if (!isset($component['salesforce_webform']))
+		return;
+
+	db_insert('salesforce_webform_fieldmaps')
+		->fields(array(
+			'nid' => $component['nid'],
+			'cid' => $component['cid'],
+			'sffname' => $component['salesforce_webform']['object']
+		))
+		->execute();
+} // end function salesforce_webform_webform_component_insert
+
+
+/**
+ * Implementation hook_webform_component_update
+ * 
+ * Upon component update either insert/update field mapping entry for
+ * webform component to Salesforce object field
+ */
+function salesforce_webform_webform_component_update($component)
+{
+	if (!isset($component['salesforce_webform']))
+		return;
+
+	$result = db_select('salesforce_webform_fieldmaps', 'swf')
+				->fields('swf', array('sffname'))
+				->condition('nid', $component['nid'])
+				->condition('cid', $component['cid'])
+				->execute()
+				->fetchObject();
+	if ($result)
+	{
+		db_update('salesforce_webform_fieldmaps')
+			->fields(array(
+				'sffname' => $component['salesforce_webform']['object']
+			))
+			->condition('nid', $component['nid'])
+			->condition('cid', $component['cid'])
+			->execute();
+	}
+	else
+	{
+		db_insert('salesforce_webform_fieldmaps')
+			->fields(array(
+				'nid' => $component['nid'],
+				'cid' => $component['cid'],
+				'sffname' => $component['salesforce_webform']['object']
+			))
+			->execute();
+	}
+} // end function salesforce_webform_webform_component_update
+
+
+/**
+ * Implementation of hook_webform_component_delete
+ * 
+ * Delete any fieldmaps of the component to the salesforce object field
+ */
+function salesforce_webform_webform_component_delete($component)
+{
+	if (!isset($component['salesforce_webform']))
+		return;
+
+	db_delete('salesforce_webform_fieldmaps')
+		->condition('nid', $component['nid'])
+		->condition('cid', $component['cid'])
+		->execute();
+} // end function salesforce_webform_webform_component_delete
+
+
+/**
+ * Implementation of hook_webform_submission_insert
+ * 
+ * Upsert data into Salesforce via the Salesforce API
+ */
+function salesforce_webform_webform_submission_insert($node, $submission)
+{
+	if (isset($node->use_saleforce) && $node->use_salesforce == 0)
+		return;
+
+	$components = $node->webform['components'];
+
+	$records = array();
+	$record = array();
+	foreach ($components as $key => $component)
+	{
+		$result = db_select('salesforce_webform_fieldmaps', 'swf')
+					->fields('swf', array('sffname'))
+					->condition('nid', $component['nid'])
+					->condition('cid', $component['cid'])
+					->execute()
+					->fetchObject();
+
+		$record[$result->sffname] = $submission->data[$component['cid']]['value'][0];
+	}
+	$records[] = $record;
+
+	// Upsert it into SalesForce
+	salesforce_api_upsert($records, $type = $node->salesforce_object);
+} // end function salesforce_webform_submission_insert
+
+
+
+

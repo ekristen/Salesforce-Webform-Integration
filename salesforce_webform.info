@@ -1,0 +1,10 @@
+; $Id$
+name = Salesforce Webform Integration
+description = Allows for data from Webform submissions to be sent to Salesforce.
+core = 7.x
+version = "7.x-0.2"
+package = Salesforce
+dependencies[] = salesforce_api
+dependencies[] = webform
+files[] = salesforce_webform.module
+files[] = salesforce_webform.js
