@@ -1,0 +1,17 @@
+Salesforce Webform Integration Module
+
+This is a module for Drupal 7, it extends the capability of the Salesforce Suite modules.
+
+It is dependent on the Webform module and the Salesforce API modules.
+
+Once enabled you can enable the upserting of information into you Salesforce account upon the submission of a webform.
+
+How it Works 
+-------------
+When you create or edit a webform the option to enable sending of data to Salesforce will now be available in the additional setting section.
+You will also be able to select what type of Salesforce Object you'd like to upsert the data as.
+When you are creating the different components or updating the components of your webform you will see a Salesforce Object Field setting,
+in this setting you can select which Salesforce Object Field the data should be upserted into for the object that you selected when you created the webform.
+Finally once the webform is filled out and submitted the data will be upserted into your Salesforce account. 
+
+
