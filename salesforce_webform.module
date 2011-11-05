@@ -1,5 +1,24 @@
 <?php
 
+
+/**
+ * Implements hook_menu
+ */
+function salesforce_webform_menu()
+{
+	$items['node/%/submission/%/resendsalesforce'] = array(
+		'title' => 'Resend to Salesforce',
+		'description' => 'Resend Webform Submission to Salesforce',
+		'page callback' => 'salesforce_webform_resend_salesforce',
+		'page arguments' => array(1, 3),
+		'access arguments' => array('access administration pages'),
+		'type' => MENU_CALLBACK
+	);
+	
+	return $items;
+} // end function salesforce_webform_menu
+
+
 /**
  * Implementation of hook_node_load
  * 
@@ -23,21 +42,23 @@ function salesforce_webform_node_load($nodes, $types)
 	// We only care if we are dealing with a webform node
 	if ($node->type == 'webform')
 	{
-		$active = variable_get('salesforce_webform_active_webforms', serialize(array()));
-		$object = variable_get('salesforce_webform_webform_objects', serialize(array()));
-		$active_webforms = unserialize($active);
-		$webform_objects = unserialize($object);
+		$result = db_select('salesforce_webforms', 'sw')
+					->fields('sw')
+					->condition('nid', $node->nid)
+					->execute()
+					->fetchObject();
 
-		if (in_array($node->nid, $active_webforms))
+		if (!empty($result))
 		{
-			$node->use_salesforce    = 1;
-			$node->salesforce_object = $webform_objects[$node->nid];
+			$node->use_salesforce    = $result->enabled;
+			$node->salesforce_object = $result->object;
 		}
 		else
 		{
 			$node->use_salesforce = 0;
 		}		
 	}
+
 } // end function salesforce_webform_node_load
 
 
@@ -74,32 +95,37 @@ function salesforce_webform_node_update($node)
  */
 function _salesforce_webform_node_insert_update($node)
 {
-	$active = variable_get('salesforce_webform_active_webforms', serialize(array()));
-	$object = variable_get('salesforce_webform_webform_objects', serialize(array()));
-	$active_webforms = unserialize($active);
-	$webform_objects = unserialize($object);
+	if ($node->type != 'webform' && !isset($node->salesforce_webform_settings['use_salesforce']))
+		return;
 
-	if ( isset($node->use_salesforce) && $node->use_salesforce == 1)
+	$result = db_select('salesforce_webforms', 'sw')
+				->fields('sw')
+				->condition('nid', $node->nid)
+				->execute()
+				->fetchObject();
+
+	if (empty($result))
 	{
-		if (!in_array($node->nid, $active_webforms))
-		{
-			$active_webforms[] = $node->nid;
-			variable_set('salesforce_webform_active_webforms', serialize($active_webforms));
-		}
-
-		$webform_objects[$node->nid] = $node->salesforce_object;
-		variable_set('salesforce_webform_webform_objects', serialize($webform_objects));
+		db_insert('salesforce_webforms')
+			->fields(array(
+				'nid' => $node->nid,
+				'enabled' => ($node->salesforce_webform_settings['use_salesforce'] == 1) ? 1 : 0,
+				'object' => $node->salesforce_webform_settings['salesforce_object']
+			))
+			->execute();
 	}
 	else
 	{
-		if (in_array($node->nid, $active_webforms))
-		{
-			$key = array_search($node->nid, $active_webforms);
-			unset($active_webforms[$key]);
 
-			variable_set('salesforce_webform_active_webforms', serialize($active_webforms));
-		}
+		db_update('salesforce_webforms')
+			->fields(array(
+				'enabled' => ($node->salesforce_webform_settings['use_salesforce'] == 1) ? 1 : 0,
+				'object' => $node->salesforce_webform_settings['salesforce_object']
+			))
+			->condition('nid', $node->nid)
+			->execute();
 	}
+
 } // end function _salesforce_webform_node_insert_update
 
 
@@ -125,7 +151,8 @@ function salesforce_webform_form_alter(&$form, &$form_state, $form_id)
 			'#type' => 'fieldset',
 			'#title' => t('SalesForce Settings'),
 			'#collapsible' => TRUE,
-			'#collapsed' => FALSE,
+		    '#collapsed' => FALSE,
+			'#tree' => TRUE,
 			'#group' => 'additional_settings',
 			'#attributes' => array(
 		      'class' => array('salesforce-webform-settings-form'),
@@ -136,13 +163,10 @@ function salesforce_webform_form_alter(&$form, &$form_state, $form_id)
 			'#weight' => 10
 		);
 		$form['salesforce_webform_settings']['use_salesforce'] = array (
-			'#type' => 'radios',
+			'#type' => 'checkbox',
 			'#title' => t('Submit to SalesForce'),
-			'#options' => array(
-				1=>t('Yes'), 0=>t('No')
-			),
-			'#description' => t('If yes, the form will be sent via SOAP to SalesForce.  Make sure you have specified the username & password in Administer->Site Configuration->SalesForce Webform first.'),
-			'#default_value' => (isset($form['#node']->use_salesforce)) ? $form['#node']->use_salesforce : 0,
+			'#default_value' => (isset($form['#node']->use_salesforce) && $form['#node']->use_salesforce == 1) ? 1 : 0,
+			'#description' => t('If yes, the form will be sent via SOAP to SalesForce.  Make sure you have specified the username & password in Administer->Site Configuration->SalesForce Webform first.')
 		);
 		$form['salesforce_webform_settings']['salesforce_object'] = array(
 			'#type' => 'select',
@@ -230,32 +254,45 @@ function salesforce_webform_webform_component_update($component)
 	if (!isset($component['salesforce_webform']))
 		return;
 
-	$result = db_select('salesforce_webform_fieldmaps', 'swf')
-				->fields('swf', array('sffname'))
-				->condition('nid', $component['nid'])
-				->condition('cid', $component['cid'])
-				->execute()
-				->fetchObject();
-	if ($result)
+	if ($component['salesforce_webform']['object'] == 'none')
 	{
-		db_update('salesforce_webform_fieldmaps')
-			->fields(array(
-				'sffname' => $component['salesforce_webform']['object']
-			))
+		db_delete('salesforce_webform_fieldmaps')
 			->condition('nid', $component['nid'])
 			->condition('cid', $component['cid'])
 			->execute();
 	}
 	else
 	{
-		db_insert('salesforce_webform_fieldmaps')
-			->fields(array(
-				'nid' => $component['nid'],
-				'cid' => $component['cid'],
-				'sffname' => $component['salesforce_webform']['object']
-			))
-			->execute();
+		$result = db_select('salesforce_webform_fieldmaps', 'swf')
+					->fields('swf', array('sffname'))
+					->condition('nid', $component['nid'])
+					->condition('cid', $component['cid'])
+					->execute()
+					->fetchObject();
+
+		if ($result)
+		{
+			db_update('salesforce_webform_fieldmaps')
+				->fields(array(
+					'sffname' => $component['salesforce_webform']['object']
+				))
+				->condition('nid', $component['nid'])
+				->condition('cid', $component['cid'])
+				->execute();
+		}
+		else
+		{
+			db_insert('salesforce_webform_fieldmaps')
+				->fields(array(
+					'nid' => $component['nid'],
+					'cid' => $component['cid'],
+					'sffname' => $component['salesforce_webform']['object']
+				))
+				->execute();
+		}
+		
 	}
+
 } // end function salesforce_webform_webform_component_update
 
 
@@ -283,7 +320,7 @@ function salesforce_webform_webform_component_delete($component)
  */
 function salesforce_webform_webform_submission_insert($node, $submission)
 {
-	if (isset($node->use_saleforce) && $node->use_salesforce == 0)
+	if (!isset($node->use_salesforce) || (isset($node->use_salesforce) && $node->use_salesforce == 0))
 		return;
 
 	$components = $node->webform['components'];
@@ -299,14 +336,121 @@ function salesforce_webform_webform_submission_insert($node, $submission)
 					->execute()
 					->fetchObject();
 
-		$record[$result->sffname] = $submission->data[$component['cid']]['value'][0];
+		if (!empty($result))
+			$record[$result->sffname] = $submission->data[$component['cid']]['value'][0];
 	}
 	$records[] = $record;
 
 	// Upsert it into SalesForce
-	salesforce_api_upsert($records, $type = $node->salesforce_object);
+	$result = salesforce_api_upsert($records, $node->salesforce_object);
+
+	if (isset($result['successes'][0]))
+	{
+		if (isset($result['created'][0]))
+		{
+			$sfid = $result['created'][0];
+		}
+		else if (isset($result['updated'][0]))
+		{
+			$sfid = $result['updated'][0];
+		}
+
+		db_insert('salesforce_webform_submissions')
+			->fields(array(
+				'sid' => $submission->sid,
+				'sfid' => $sfid,
+				'status' => 1
+			))
+			->execute();
+	}
+	else
+	{
+		db_insert('salesforce_webform_submissions')
+			->fields(array(
+				'sid' => $submission->sid,
+				'status' => 2
+			))
+			->execute();
+		
+		watchdog('salesforce_webform', 'Salesforce Upsert failed');
+	}
 } // end function salesforce_webform_submission_insert
 
 
+function salesforce_webform_resend_salesforce($nid, $sid)
+{
+	module_load_include('inc', 'webform', 'includes/webform.submissions');
+
+	$node = node_load($nid);
+	$submission = webform_get_submission($nid, $sid);
+
+	$components = db_select('webform_component', 'wc')
+					->fields('wc')
+					->condition('nid', $nid)
+					->execute()
+					->fetchAll();
+
+	$records = array();
+	$record = array();
+	foreach ($components as $key => $component)
+	{
+		$result = db_select('salesforce_webform_fieldmaps', 'swf')
+					->fields('swf', array('sffname'))
+					->condition('nid', $component->nid)
+					->condition('cid', $component->cid)
+					->execute()
+					->fetchObject();
+
+		if (!empty($result))
+			$record[$result->sffname] = $submission->data[$component->cid]['value'][0];
+	}
+	$records[] = $record;
+
+	// Upsert it into SalesForce
+	$result = salesforce_api_upsert($records, $type = $node->salesforce_object);
+
+	if (isset($result['successes'][0]))
+	{
+		if (isset($result['created'][0]))
+		{
+			$sfid = $result['created'][0];
+		}
+		else if (isset($result['updated'][0]))
+		{
+			$sfid = $result['updated'][0];
+		}
+
+		db_update('salesforce_webform_submissions')
+			->fields(array(
+				'sfid' => $sfid,
+				'status' => 1
+			))
+			->condition('sid', $submission->sid)
+			->execute();
+			
+		drupal_set_message('Resend to Salesforce Succeeded');
+	}
+	else
+	{
+		db_update('salesforce_webform_submissions')
+			->fields(array(
+				'status' => 2
+			))
+			->condition('sid', $submission->sid)
+			->execute();
+			
+		drupal_set_message('Resend to Salesforce Failed', 'error');
+	}
+
+	if (isset($_REQUEST['destination']))
+	{
+		drupal_goto($_REQUEST['destination']);
+	}
+	else
+	{
+		drupal_goto("node/{$nid}/submission/{$sid}");
+	}
+
+} // end function salesforce_webform_resend_salesforce
 
 

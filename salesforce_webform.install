@@ -12,9 +12,6 @@ function salesforce_webform_install()
 	  ->condition('type', 'module')
 	  ->fields(array('weight' => -1))
 	  ->execute();
-
-	variable_set('salesforce_webform_active_webforms', serialize(array()));
-	variable_set('salesforce_webform_webform_objects', serialize(array()));
 } // end function salesforce_webform_install
 
 
@@ -25,9 +22,7 @@ function salesforce_webform_install()
  */
 function salesforce_webform_uninstall()
 {
-	db_delete('variable')
-	  ->condition('name', 'salesforce_webform%', 'LIKE')
-	  ->execute();
+
 } // end function salesforce_webform_uninstall
 
 
@@ -76,6 +71,123 @@ function salesforce_webform_schema()
 		'primary key' => array('id'),
 	);
 	
+	$schema['salesforce_webforms'] = array(
+		'description' => '',
+		'fields' => array(
+			'id' => array(
+				'description' => 'Unique ID of the entry',
+				'type' => 'serial',
+			),
+			'nid' => array(
+				'description' => 'Corresponding Webform Node ID',
+		        'type' => 'int',
+		        'unsigned' => TRUE,
+		        'not null' => TRUE,
+		        'default' => 0,
+			),
+			'enabled' => array(
+				'description' => 'Whether or not salesforce webform is enabled for the node',
+		        'type' => 'int',
+		        'unsigned' => TRUE,
+		        'not null' => TRUE,
+		        'default' => 0,
+			),
+			'object' => array(
+				'description' => 'Salesforce Object Name',
+		        'type' => 'varchar',
+				'length' => '255',
+		        'default' => '',
+			),
+		),
+		'index' => array(
+			'id' => array('id'),
+			'nid' => array('nid'),
+		),
+		'primary key' => array('id')
+	);
+	
+	$schema['salesforce_webform_submissions'] = array(
+		'description' => '',
+		'fields' => array(
+			'id' => array(
+				'description' => 'Unique ID of the Entry',
+				'type' => 'serial'
+			),
+			'sid' => array(
+				'description' => 'Corresponding Webform Submission ID',
+				'type' => 'int',
+				'unsigned' => TRUE,
+				'not null' => TRUE,
+				'default' => 0
+			),
+			'sfid' => array(
+				'description' => 'Corresponding Salesforce ID',
+				'type' => 'varchar',
+				'length' => '32',
+				'default' => ''
+			),
+			'status' => array(
+				'description' => 'Status of the entry, 0-unknonw, 1-success, 2-failure',
+				'type' => 'int',
+				'size' => 'tiny',
+				'length' => 1,
+				'default' => 0
+			)
+		),
+		'indexes' => array(
+			'id' => array('id'),
+			'sid' => array('sid')
+		),
+		'primary key' => array('id')
+	);
+	
 	return $schema;
 } // end function salesforce_webform_schema
+
+
+/**
+ * Create the Salesforce Webform Submissions table
+ */
+function salesforce_webform_update_7001()
+{
+	$salesforce_webform_submissions = array(
+		'description' => '',
+		'fields' => array(
+			'id' => array(
+				'description' => 'Unique ID of the Entry',
+				'type' => 'serial'
+			),
+			'sid' => array(
+				'description' => 'Corresponding Webform Submission ID',
+				'type' => 'int',
+				'unsigned' => TRUE,
+				'not null' => TRUE,
+				'default' => 0
+			),
+			'sfid' => array(
+				'description' => 'Corresponding Salesforce ID',
+				'type' => 'varchar',
+				'length' => '32',
+				'default' => ''
+			),
+			'status' => array(
+				'description' => 'Status of the entry, 0-unknonw, 1-success, 2-failure',
+				'type' => 'int',
+				'size' => 'tiny',
+				'length' => 1,
+				'default' => 0
+			)
+		),
+		'indexes' => array(
+			'id' => array('id'),
+			'sid' => array('sid')
+		),
+		'primary key' => array('id')
+	);
+
+	db_create_table('salesforce_webform_submissions', $salesforce_webform_submissions);
+} // end function salesforce_webform_update_7001
+
+
+
 
